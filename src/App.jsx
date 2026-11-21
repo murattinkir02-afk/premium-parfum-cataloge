@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Search, SlidersHorizontal, ArrowDownUp, House, Grid2X2, ShieldCheck, X,
   Plus, Pencil, Trash2, LogOut, Package, Layers, Palette, Upload,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, BarChart3
 } from "lucide-react";
+import { useRef } from "react";
 import { isConfigured, supabase } from "./supabase";
 
 const defaultSettings = {
@@ -37,6 +38,10 @@ export default function App() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [session, setSession] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
+  const [analytics, setAnalytics] = useState(null);
+  const [analyticsError, setAnalyticsError] = useState("");
+  const lastTrackedView = useRef("");
   const [tab, setTab] = useState("products");
   const [editing, setEditing] = useState(null);
   const [productForm, setProductForm] = useState(emptyProduct());
@@ -48,14 +53,17 @@ export default function App() {
   useEffect(() => {
     loadPublicData();
     if (!isConfigured) { setLoading(false); return; }
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(async ({ data }) => {
       setSession(data.session);
-      if (data.session) checkAdmin(data.session.user.id);
+      if (data.session) await checkAdmin(data.session.user.id);
+      else setIsAdmin(false);
+      setAuthReady(true);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => {
+      setAuthReady(false);
       setSession(next);
-      if (next) checkAdmin(next.user.id);
-      else { setIsAdmin(false); setAdminOpen(false); }
+      if (next) checkAdmin(next.user.id).finally(() => setAuthReady(true));
+      else { setIsAdmin(false); setAdminOpen(false); setAuthReady(true); }
     });
     return () => listener.subscription.unsubscribe();
   }, []);
@@ -89,7 +97,39 @@ export default function App() {
     const { data, error } = await supabase.from("admin_users")
       .select("user_id").eq("user_id", userId).maybeSingle();
     setIsAdmin(!error && Boolean(data));
+    return !error && Boolean(data);
   }
+
+  useEffect(() => {
+    if (!isConfigured || !authReady || isAdmin || loading) return;
+    let visitorId;
+    try {
+      visitorId = sessionStorage.getItem("catalog-anonymous-session");
+      if (!visitorId) {
+        visitorId = crypto.randomUUID();
+        sessionStorage.setItem("catalog-anonymous-session", visitorId);
+      }
+    } catch { return; }
+    const viewKey = screen === "detail" && selectedProduct ? `product:${selectedProduct.id}` : screen;
+    if (lastTrackedView.current === viewKey) return;
+    lastTrackedView.current = viewKey;
+    supabase.rpc("record_catalog_event", {
+      p_visitor_id: visitorId,
+      p_event_type: screen === "detail" && selectedProduct ? "product_view" : "page_view",
+      p_product_id: screen === "detail" && selectedProduct ? selectedProduct.id : null
+    }).then(({ error }) => { if (error) console.warn("Analytics event was not recorded."); });
+  }, [authReady, isAdmin, loading, screen, selectedProduct]);
+
+  async function loadAnalytics() {
+    setAnalyticsError("");
+    const { data, error } = await supabase.rpc("get_catalog_analytics");
+    if (error) { setAnalyticsError("İstatistikler yüklenemedi. Önce analytics.sql dosyasını Supabase SQL Editor'de çalıştırın."); return; }
+    setAnalytics(data);
+  }
+
+  useEffect(() => {
+    if (adminOpen && isAdmin && tab === "analytics") loadAnalytics();
+  }, [adminOpen, isAdmin, tab]);
 
   const visibleProducts = useMemo(() => {
     let list = products.filter((p) => {
@@ -334,6 +374,7 @@ export default function App() {
               <h2>Yönetim</h2>
               <button className={tab === "products" ? "chosen" : ""} onClick={() => setTab("products")} type="button"><Package/> Ürünler</button>
               <button className={tab === "categories" ? "chosen" : ""} onClick={() => setTab("categories")} type="button"><Layers/> Kategoriler</button>
+              <button className={tab === "analytics" ? "chosen" : ""} onClick={() => setTab("analytics")} type="button"><BarChart3/> Ziyaret İstatistikleri</button>
               <button className={tab === "design" ? "chosen" : ""} onClick={() => setTab("design")} type="button"><Palette/> Tasarım</button>
               <button className="logout" onClick={logout} type="button"><LogOut/> Çıkış</button>
             </aside>
@@ -374,6 +415,34 @@ export default function App() {
                   <button className="primary"><Plus/> Ekle</button>
                 </form>
                 {categories.map(c => <div className="admin-row" key={c.id}><b>{c.name}</b><button type="button" onClick={() => deleteCategory(c.id)}><Trash2/></button></div>)}
+              </section>}
+              {tab === "analytics" && <section className="analytics-panel">
+                <div className="admin-heading"><div><h2>Ziyaret İstatistikleri</h2><p>Anonim tarayıcı oturumlarından alınır. Yönetici ziyaretleri dahil edilmez.</p></div>
+                  <button className="secondary small" type="button" onClick={loadAnalytics}>Yenile</button>
+                </div>
+                {analyticsError && <div className="notice">{analyticsError}</div>}
+                {!analytics && !analyticsError && <p>İstatistikler yükleniyor...</p>}
+                {analytics && <>
+                  <div className="analytics-cards">
+                    <article><span>Bugünkü tekil ziyaretçi</span><strong>{analytics.today_unique ?? 0}</strong></article>
+                    <article><span>Toplam ziyaret</span><strong>{analytics.total_visits ?? 0}</strong></article>
+                    <article><span>Son 7 gün</span><strong>{analytics.last_7_days ?? 0}</strong></article>
+                    <article><span>Son 30 gün</span><strong>{analytics.last_30_days ?? 0}</strong></article>
+                  </div>
+                  <div className="analytics-columns">
+                    <section className="analytics-box"><h3>Son 30 gün eğilimi</h3>
+                      <div className="trend-chart" role="img" aria-label="Son 30 gün günlük ziyaret grafiği">
+                        {(analytics.daily || []).map(day => <div className="trend-day" key={day.day} title={`${day.day}: ${day.visits} ziyaret`}>
+                          <span style={{height: `${Math.max(4, (Number(day.visits) / Math.max(1, ...analytics.daily.map(d => Number(d.visits)))) * 100)}%`}} />
+                        </div>)}
+                      </div><div className="trend-labels"><span>30 gün önce</span><span>Bugün</span></div>
+                    </section>
+                    <section className="analytics-box"><h3>En çok görüntülenen parfümler</h3>
+                      {(analytics.top_products || []).length ? <ol className="top-products">{analytics.top_products.map(item => <li key={item.product_id}><span>{item.brand ? `${item.brand} — ` : ""}{item.name}</span><b>{item.views}</b></li>)}</ol> : <p>Henüz ürün görüntüleme verisi yok.</p>}
+                    </section>
+                  </div>
+                  <p className="analytics-note">Tekil ziyaretçi sayısı, aynı tarayıcı sekmesindeki anonim oturumu ifade eder. Kişiyi veya cihazlar arası ziyaretleri belirlemez.</p>
+                </>}
               </section>}
               {tab === "design" && <section>
                 <h2>Site ve Tasarım Ayarları</h2><p>Değişiklikler kaydedildiğinde katalogda uygulanır.</p>

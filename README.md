@@ -56,6 +56,12 @@ npm run build
 - Site adı, alt başlık, renkler ve fiyat görünürlüğü ayarları
 - Supabase Storage görsel yükleme
 - Netlify SPA yönlendirmesi
+- Yönetici panelinde anonim ziyaret istatistikleri
+
+## Anonim ziyaret istatistikleri
+İstatistikleri etkinleştirmek için `analytics.sql` dosyasını mevcut Supabase projesinin SQL Editor bölümünde bir kez çalıştırın. Bu ek tablo ve fonksiyonları oluşturur; ürün, kategori, ayar, kullanıcı veya mevcut kimlik doğrulama verilerine dokunmaz. İstatistikler yönetici panelindeki **Ziyaret İstatistikleri** bölümünde görünür.
+
+Yalnızca rastgele bir oturum kimliği, sayfa/ürün görüntüleme türü ve zaman damgası saklanır. IP adresi, tarayıcı bilgisi, ad, e-posta, telefon veya benzeri kişisel bilgi toplanmaz. Ziyaretçi kimliği `sessionStorage` içinde sekme oturumu boyunca tutulur; bu nedenle “tekil ziyaretçi” aynı tarayıcı sekmesindeki anonim oturum anlamına gelir, kişi veya cihazlar arası kişi takibi anlamına gelmez. Yönetici oturumları hem istemcide hem veritabanı fonksiyonunda hariç tutulur. Yönetici raporu yalnızca toplu değerleri verir.
 
 ## Sonraki geliştirme adımları
 Ürün detay sayfası, alt kategoriler, toplu ürün işlemleri, gelişmiş tasarım seçenekleri, ürün sıralama yönetimi ve yedek dışa/içe aktarma ayrıca eklenebilir. Bu ilk paket, gerçek Supabase proje bilgileri bağlanmadan canlı veri okuyamaz.
